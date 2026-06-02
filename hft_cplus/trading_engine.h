@@ -3,13 +3,11 @@
 #include <cstdint>
 #include <array>
 #include <time.h>
-#include <immintrin.h>
 
 #define LIKELY(x)    __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)  __builtin_expect(!!(x), 0)
 #define FORCE_INLINE __attribute__((always_inline)) inline
 #define HOT          __attribute__((hot))
-#define COLD         __attribute__((cold))
 
 using OrderId   = uint64_t;
 using UserId    = uint32_t;
@@ -17,7 +15,7 @@ using Price     = int64_t;
 using Quantity  = uint32_t;
 using Timestamp = uint64_t;
 
-// VDSO-backed clock — no syscall overhead (~10 ns vs ~25 ns)
+// ── Faster clock: VDSO-mapped, no syscall ────────────────────────────
 FORCE_INLINE Timestamp now_ns() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -28,21 +26,23 @@ enum class Side       : uint8_t { BUY = 0, SELL = 1 };
 enum class OrderType  : uint8_t { LIMIT = 0, MARKET = 1 };
 enum class OrderStatus: uint8_t { NEW, PARTIAL, FILLED, CANCELLED };
 
-// ── Order: hot fields first, fits one 64-byte cache line ─────────────
+// ── Order: hot fields first, one cache line ───────────────────────────
 struct alignas(64) Order {
-    OrderId    id        = 0;    //  8
-    Price      price     = 0;    //  8
-    Timestamp  ts_in     = 0;    //  8
-    Quantity   qty       = 0;    //  4
-    Quantity   filled    = 0;    //  4
-    UserId     user_id   = 0;    //  4
-    Side       side      = Side::BUY;
-    OrderType  type      = OrderType::LIMIT;
-    OrderStatus status   = OrderStatus::NEW;
-    uint8_t    _pad      = 0;
-    char       symbol[8] = {};
-    Timestamp  ts_filled = 0;
-    uint8_t    _pad2[8]  = {};
+    OrderId    id         = 0;   //  8
+    Price      price      = 0;   //  8
+    Timestamp  ts_in      = 0;   //  8
+    Quantity   qty        = 0;   //  4
+    Quantity   filled     = 0;   //  4
+    UserId     user_id    = 0;   //  4
+    Side       side       = Side::BUY;
+    OrderType  type       = OrderType::LIMIT;
+    OrderStatus status    = OrderStatus::NEW;
+    uint8_t    _pad       = 0;
+    char       symbol[8]  = {};  //  8
+    Timestamp  ts_filled  = 0;   //  8
+    // total: 56 bytes → padded to 64 by alignas
+    uint8_t    _pad2[8]   = {};
+
     FORCE_INLINE Quantity remaining() const { return qty - filled; }
 };
 static_assert(sizeof(Order) == 64, "Order must be one cache line");
@@ -55,19 +55,19 @@ struct Trade {
     char      symbol[8];
 };
 
-// ── SPSC Queue: cached head/tail + prefetch + _mm_pause ──────────────
+// ── SPSC Queue with cached head/tail ─────────────────────────────────
 template<typename T, size_t Capacity = 4096>
 class SPSCQueue {
     static_assert((Capacity & (Capacity - 1)) == 0);
     static constexpr size_t MASK = Capacity - 1;
 
     alignas(64) std::atomic<size_t> head_{0};
-    size_t   cached_tail_  = 0;
-    uint8_t  _pad0[64 - 2*sizeof(size_t)] = {};
+    size_t  cached_tail_ = 0;
+    uint8_t _pad0[64 - 2*sizeof(size_t)] = {};
 
     alignas(64) std::atomic<size_t> tail_{0};
-    size_t   cached_head_  = 0;
-    uint8_t  _pad1[64 - 2*sizeof(size_t)] = {};
+    size_t  cached_head_ = 0;
+    uint8_t _pad1[64 - 2*sizeof(size_t)] = {};
 
     alignas(64) std::array<T, Capacity> buf_;
 
