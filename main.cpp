@@ -1,3 +1,4 @@
+#include <sys/stat.h>
 // ═══════════════════════════════════════════════════════════════════
 //  HFT Learning Engine  –  main.cpp
 //  Simulates N concurrent users sending orders against a live engine.
@@ -57,7 +58,7 @@ void user_thread(std::shared_ptr<UserSession> sess,
 // ── main ─────────────────────────────────────────────────────────────
 int main() {
     // ensure logs directory exists
-    system("mkdir -p logs");
+    mkdir("logs", 0755);
 
     printf("\033[1;34m");
     printf("╔══════════════════════════════════════════════════╗\n");
