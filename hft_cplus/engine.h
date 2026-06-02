@@ -10,9 +10,14 @@
 #include "order_book.h"
 #include "logger.h"
 
+// ── Set to 0 to disable per-order DEBUG/INFO logs on hot path ─────────
+//    Logging every order at 100k/sec floods the async queue
+//    and adds ~100µs of backpressure per order
+#define LOG_ORDERS 0
+
 struct UserSession {
     UserId id = 0;
-    alignas(64) SPSCQueue<Order, 4096> inbound;  // 4x larger queue
+    alignas(64) SPSCQueue<Order, 4096> inbound;
     std::atomic<uint64_t> next_order_id{1};
 
     FORCE_INLINE OrderId new_order_id() {
@@ -22,10 +27,9 @@ struct UserSession {
 };
 
 class TradingEngine {
-    // Fixed array lookup — no std::string construction on hot path
     static constexpr size_t MAX_SYM = 8;
     struct SymEntry {
-        uint32_t                   key  = 0;  // first 4 bytes of symbol
+        uint32_t                   key = 0;
         std::unique_ptr<OrderBook> book;
     };
     SymEntry sym_table_[MAX_SYM];
@@ -54,7 +58,6 @@ class TradingEngine {
         snap.reserve(64);
 
         while (LIKELY(running_.load(std::memory_order_relaxed))) {
-            // refresh snapshot only when needed
             {
                 std::lock_guard<std::mutex> lk(sess_mu_);
                 if (snap.size() != sessions_.size()) snap = sessions_;
@@ -70,7 +73,6 @@ class TradingEngine {
             }
 
             if (UNLIKELY(idle)) {
-                // _mm_pause: CPU hint for spin-wait — ~10ns wakeup vs 1µs sleep
                 _mm_pause(); _mm_pause(); _mm_pause(); _mm_pause();
             }
 
@@ -89,15 +91,20 @@ class TradingEngine {
             logger_.log(2, "Unknown symbol '%.7s' dropped", o.symbol);
             return;
         }
+#if LOG_ORDERS
+        // only log when LOG_ORDERS=1 — disabled at 100k+/sec
         logger_.log(0, "ORDER side=%s sym=%.7s px=%lld qty=%u id=%llu user=%u",
             o.side == Side::BUY ? "BUY " : "SELL",
             o.symbol, (long long)o.price, o.qty,
             (unsigned long long)o.id, o.user_id);
+#endif
         book->add_order(o);
+#if LOG_ORDERS
         auto [bid, ask] = book->spread();
         logger_.log(1, "BOOK  %.7s bid=%lld ask=%lld bdepth=%zu adepth=%zu",
             o.symbol, (long long)bid, (long long)ask,
             book->bid_depth(), book->ask_depth());
+#endif
     }
 
 public:
@@ -126,7 +133,7 @@ public:
     void start() {
         running_ = true;
         engine_thread_ = std::thread(&TradingEngine::engine_loop, this);
-        logger_.log(1, "Engine started — %zu symbols", num_sym_);
+        logger_.log(1, "Engine started — %zu symbols (LOG_ORDERS=%d)", num_sym_, LOG_ORDERS);
     }
 
     void stop() {
