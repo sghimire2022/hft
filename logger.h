@@ -36,7 +36,7 @@ class AsyncLogger {
 
     void writer_loop() {
         LogEntry e;
-        while (running_.load(std::memory_order_relaxed) || queue_.size() > 0) {
+        while (running_.load(std::memory_order_relaxed) || !queue_.empty()) {
             if (queue_.pop(e)) {
                 // nanoseconds → human readable
                 uint64_t ns = e.ts;
