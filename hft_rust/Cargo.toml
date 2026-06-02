@@ -1,0 +1,12 @@
+[package]
+name = "hft"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossbeam = "0.8"
+parking_lot = "0.12"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3

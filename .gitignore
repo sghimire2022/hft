@@ -1,3 +1,9 @@
 /logs
 hft_cplus/htf_engine_opt
 hft_cplus/logs/
+htf_go/build/
+htf_go/logs/
+htf_rust/build/
+htf_rust/logs/
+htf_cplus/build/
+htf_cplus/logs/
